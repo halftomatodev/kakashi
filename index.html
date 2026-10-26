@@ -26,6 +26,7 @@
     --rec: #e5484d;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; }
   body {
     background: var(--bg); color: var(--fg);
@@ -116,6 +117,10 @@
   .meter { width: 200px; height: 12px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   #meterBar { height: 100%; width: 0; background: var(--accent); transition: width .05s; }
   #meterBar.clip { background: var(--rec); }
+  h3.sec { margin: 22px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--fg); }
+  h3.sec .hint { margin-left: 6px; }
+  #keyList .row button { min-width: 120px; }
+  #keyList .row button.wait { border-color: var(--accent); color: var(--accent); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
   .hint { font-size: 13px; color: var(--muted); line-height: 1.6; }
   @media (max-width: 760px) {
@@ -131,7 +136,7 @@
   <div class="stats">
     <span>연습 누적 시간: <b id="statTime">0시간 0분 0초</b></span>
     <span>카피한 술법 수: <b id="statChars">0</b>개</span>
-    <button id="btnAll">녹음 목록<kbd>L</kbd></button>
+    <button id="btnAll">녹음 목록<kbd data-key="all"></kbd></button>
     <button id="btnSettings">설정</button>
   </div>
 </header>
@@ -161,21 +166,22 @@
       </div>
       <div id="status">대기 중</div>
       <div class="controls">
-        <button id="btnListen">다시 듣기<kbd>Q</kbd></button>
-        <button id="btnRec" class="recbtn primary">녹음 시작<kbd>Space</kbd></button>
-        <button id="btnRetake">재녹음<kbd>R</kbd></button>
-        <button id="btnMine">내 녹음 듣기<kbd>W</kbd></button>
-        <button id="btnPrev">이전 대사<kbd>B</kbd></button>
-        <button id="btnNext">다음 대사<kbd>N</kbd></button>
-        <button id="btnChar">캐릭터 변경<kbd>C</kbd></button>
+        <button id="btnListen">다시 듣기<kbd data-key="listen"></kbd></button>
+        <button id="btnRec" class="recbtn primary">녹음 시작<kbd data-key="rec"></kbd></button>
+        <button id="btnRetake">재녹음<kbd data-key="retake"></kbd></button>
+        <button id="btnMine">내 녹음 듣기<kbd data-key="mine"></kbd></button>
+        <button id="btnPrev">이전 대사<kbd data-key="prev"></kbd></button>
+        <button id="btnNext">다음 대사<kbd data-key="next"></kbd></button>
+        <button id="btnChar">캐릭터 변경<kbd data-key="char"></kbd></button>
       </div>
       <div>
         <h3>이 대사의 녹음</h3>
         <div class="takes" id="takes"></div>
       </div>
-      <p class="hint">흐름: 대사 선택 → 원본 재생 → <b>Space</b>를 누르면 삑 소리 후 녹음 시작 → <b>Space</b>로 종료.
+      <p class="hint">흐름: 대사 선택 → 원본 재생 → <b data-key="rec"></b>를 누르면 삑 소리 후 녹음 시작 → <b data-key="rec"></b>로 종료.
         원본과 내 녹음이 이어 붙은 mp3로 자동 저장되고 바로 재생됩니다.
-        <b>R</b>은 녹음 중이면 현재 녹음을 버리고 다시, 아니면 새로 녹음합니다. <b>Esc</b>는 재생 정지.</p>
+        <b data-key="retake"></b>은 녹음 중이면 현재 녹음을 버리고 다시, 아니면 새로 녹음합니다.
+        <b>Esc</b>는 재생 정지, <b>← →</b>로도 이전/다음 대사로 갑니다. 단축키는 설정에서 바꿀 수 있습니다.</p>
     </div>
   </section>
 </main>
@@ -224,7 +230,10 @@
     <div class="row"><span>배경 색상</span><input type="color" id="setBg"></div>
     <div class="row"><span>글자 색상</span><input type="color" id="setFg"></div>
     <div class="row"><span>강조 색상</span><input type="color" id="setAccent"></div>
+    <h3 class="sec">단축키 <span class="hint">버튼을 누른 뒤 원하는 키를 누르세요 (Esc는 취소)</span></h3>
+    <div id="keyList"></div>
     <div class="foot">
+      <button id="btnResetKeys">단축키 기본값</button>
       <button id="btnResetSettings">기본값</button>
       <button data-close>닫기</button>
     </div>
@@ -309,7 +318,11 @@ $('#btnResetSettings').onclick = () => { saveSettings(DEFAULTS); applySettings()
 
 /* ---------- 모달 ---------- */
 function openModal(id) { $(id).hidden = false; }
-function closeModals() { document.querySelectorAll('.modal').forEach(m => m.hidden = true); stopMeter(); }
+function closeModals() {
+  document.querySelectorAll('.modal').forEach(m => m.hidden = true);
+  stopMeter();
+  if (state.capturing) { state.capturing = null; renderKeys(); }
+}
 function modalOpen() { return [...document.querySelectorAll('.modal')].some(m => !m.hidden); }
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModals);
 document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', e => { if (e.target === m) closeModals(); }));
@@ -806,25 +819,88 @@ $('#btnAll').onclick = openAllModal;
 // 버튼 클릭 후 Space가 버튼을 다시 누르지 않도록 포커스를 뺀다
 document.querySelectorAll('button').forEach(b => b.addEventListener('mouseup', () => b.blur()));
 
+/* ---------- 단축키 ---------- */
+// 키는 e.code로 저장해서 한글 입력 상태에서도 동작한다
+const KEY_ACTIONS = [
+  { id: 'listen', label: '다시 듣기', def: 'KeyQ', run: () => playOriginal() },
+  { id: 'rec', label: '녹음 시작/종료', def: 'Space', run: () => state.recording ? stopRec(false) : startRec() },
+  { id: 'retake', label: '재녹음', def: 'KeyR', run: () => retake() },
+  { id: 'mine', label: '내 녹음 듣기', def: 'KeyW', run: () => playMine() },
+  { id: 'prev', label: '이전 대사', def: 'KeyB', run: () => selectLine(state.idx - 1, true) },
+  { id: 'next', label: '다음 대사', def: 'KeyN', run: () => selectLine(state.idx + 1, true) },
+  { id: 'char', label: '캐릭터 변경', def: 'KeyC', run: () => { if (!state.recording) openCharacterModal(); } },
+  { id: 'all', label: '녹음 목록', def: 'KeyL', run: () => openAllModal() },
+];
+// 따로 지정하지 않으면 화살표로도 이전/다음 대사로 간다
+const FIXED_KEYS = { ArrowLeft: 'prev', ArrowRight: 'next' };
+const KEY_NAMES = {
+  Space: 'Space', Enter: 'Enter', Tab: 'Tab', Backspace: 'Backspace',
+  ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓',
+  Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\',
+  Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
+};
+function keyName(code) {
+  if (!code) return '없음';
+  if (KEY_NAMES[code]) return KEY_NAMES[code];
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit\d$/.test(code)) return code.slice(5);
+  if (/^Numpad/.test(code)) return 'Num ' + code.slice(6);
+  return code;
+}
+function loadKeys() {
+  const keys = Object.fromEntries(KEY_ACTIONS.map(a => [a.id, a.def]));
+  try { Object.assign(keys, JSON.parse(localStorage.getItem('kakashi.keys') || '{}')); } catch {}
+  return keys;
+}
+function saveKeys(keys) { try { localStorage.setItem('kakashi.keys', JSON.stringify(keys)); } catch {} }
+function renderKeys() {
+  const keys = loadKeys();
+  document.querySelectorAll('[data-key]').forEach(el => el.textContent = keyName(keys[el.dataset.key]));
+  const list = $('#keyList');
+  list.innerHTML = '';
+  for (const a of KEY_ACTIONS) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const b = document.createElement('button');
+    b.textContent = keyName(keys[a.id]);
+    b.onclick = () => {
+      list.querySelectorAll('button').forEach(x => x.classList.remove('wait'));
+      state.capturing = a.id;
+      b.classList.add('wait');
+      b.textContent = '키를 누르세요…';
+    };
+    row.append(a.label, b);
+    list.appendChild(row);
+  }
+}
+function assignKey(id, code) {
+  const keys = loadKeys();
+  // 이미 다른 기능에 쓰던 키면 두 기능의 키를 서로 바꾼다
+  const other = Object.keys(keys).find(k => k !== id && keys[k] === code);
+  if (other) keys[other] = keys[id];
+  keys[id] = code;
+  saveKeys(keys);
+}
+$('#btnResetKeys').onclick = () => { try { localStorage.removeItem('kakashi.keys'); } catch {} state.capturing = null; renderKeys(); };
+renderKeys();
+
 document.addEventListener('keydown', e => {
+  if (state.capturing) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (/^(Shift|Control|Alt|Meta)/.test(e.code)) return;
+    if (e.code !== 'Escape') assignKey(state.capturing, e.code);
+    state.capturing = null;
+    renderKeys();
+    return;
+  }
   if (e.target.matches('input, select, textarea') || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
   if (e.code === 'Escape') { closeModals(); stopPlayback(); setStatus('정지'); return; }
   if (modalOpen() || $('#app').hidden) return;
-  // e.code를 써서 한글 입력 상태에서도 단축키가 동작한다
-  const actions = {
-    KeyQ: playOriginal,
-    Space: () => state.recording ? stopRec(false) : startRec(),
-    KeyR: retake,
-    KeyW: playMine,
-    KeyB: () => selectLine(state.idx - 1, true),
-    ArrowLeft: () => selectLine(state.idx - 1, true),
-    KeyN: () => selectLine(state.idx + 1, true),
-    ArrowRight: () => selectLine(state.idx + 1, true),
-    KeyC: () => { if (!state.recording) openCharacterModal(); },
-    KeyL: openAllModal,
-  };
-  const fn = actions[e.code];
-  if (fn) { e.preventDefault(); fn(); }
+  const keys = loadKeys();
+  const id = Object.keys(keys).find(k => keys[k] === e.code) || FIXED_KEYS[e.code];
+  const action = KEY_ACTIONS.find(a => a.id === id);
+  if (action) { e.preventDefault(); action.run(); }
 });
 
 init();
