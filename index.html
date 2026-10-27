@@ -56,8 +56,8 @@
   #setup { margin: auto; text-align: center; max-width: 520px; padding: 24px; line-height: 1.7; }
   #setup button { margin: 6px; }
   #setup .warn { color: var(--rec); }
-  #app { flex: 1; display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
-  aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  #app { flex: 1; display: grid; grid-template-columns: var(--side, 300px) 5px 1fr; min-height: 0; }
+  aside { display: flex; flex-direction: column; min-height: 0; }
   .char-head { padding: 12px 16px; border-bottom: 1px solid var(--line); }
   .char-head .label { font-size: 12px; color: var(--muted); }
   .char-head .name { font-size: 20px; margin-top: 2px; word-break: break-all; }
@@ -69,6 +69,14 @@
   #lineList li:hover { background: var(--panel); }
   #lineList li.on { background: color-mix(in srgb, var(--accent) 22%, var(--bg)); }
   #lineList .cnt { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+  #lineList .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  #lineList .pv {
+    font-size: 13px; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #lineList .pv:empty { display: none; }
+  #splitter { cursor: col-resize; background: var(--line); }
+  #splitter:hover, #splitter.drag { background: var(--accent); }
   .stage { padding: 28px 32px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
   .line-title { font-size: 26px; word-break: break-all; }
   .line-pos { font-size: 13px; color: var(--muted); }
@@ -125,7 +133,8 @@
   .hint { font-size: 13px; color: var(--muted); line-height: 1.6; }
   @media (max-width: 760px) {
     #app { grid-template-columns: 1fr; grid-template-rows: 220px 1fr; }
-    aside { border-right: 0; border-bottom: 1px solid var(--line); }
+    aside { border-bottom: 1px solid var(--line); }
+    #splitter { display: none; }
     .stage { padding: 16px; }
   }
 </style>
@@ -158,6 +167,7 @@
       </div>
       <ul id="lineList"></ul>
     </aside>
+    <div id="splitter" title="끌어서 목록 너비 조절 · 더블클릭하면 원래대로"></div>
     <div class="stage">
       <div>
         <div class="line-pos" id="linePos"></div>
@@ -507,7 +517,11 @@ async function selectCharacter(dir) {
     if (/\.mp3$/i.test(e.name)) lines.push({ name: e.name, base: e.name.replace(/\.mp3$/i, ''), handle: e });
     else if (/\.txt$/i.test(e.name)) txts[e.name.replace(/\.txt$/i, '')] = e;
   }
-  for (const l of lines) l.txt = txts[l.base] || null;
+  for (const l of lines) {
+    l.txt = txts[l.base] || null;
+    l.text = '';
+    try { if (l.txt) l.text = (await (await l.txt.getFile()).text()).trim(); } catch {}
+  }
   if (!lines.length) { alert('이 폴더에 mp3 파일이 없습니다.'); openCharacterModal(); return; }
   lines.sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
   stopAll();
@@ -552,9 +566,11 @@ function renderLines() {
   ul.innerHTML = '';
   state.lines.forEach((l, i) => {
     const li = document.createElement('li');
-    li.innerHTML = '<span></span><span class="cnt"></span>';
-    li.firstChild.textContent = l.base;
-    if (!l.txt) { li.firstChild.classList.add('notxt'); li.title = '전사 없음'; }
+    li.innerHTML = '<div class="nm"><span></span><span class="pv"></span></div><span class="cnt"></span>';
+    li.querySelector('.nm span').textContent = l.base;
+    li.querySelector('.pv').textContent = l.text;
+    li.title = l.text || '전사 없음';
+    if (!l.txt) li.querySelector('.nm span').classList.add('notxt');
     const c = state.takeCounts[l.base];
     li.lastChild.textContent = c ? `녹음 ${c}` : '';
     if (i === state.idx) li.className = 'on';
@@ -581,6 +597,11 @@ async function renderText() {
   let text = '';
   // 매번 파일을 다시 읽어서 메모장으로 고친 내용이 바로 반영되게 한다
   try { if (cur().txt) text = (await (await cur().txt.getFile()).text()).trim(); } catch {}
+  if (text !== cur().text) {
+    cur().text = text;
+    const pv = $('#lineList').children[state.idx]?.querySelector('.pv');
+    if (pv) pv.textContent = text;
+  }
   el.textContent = text || '전사 없음 — 집 PC에서 전사.bat를 실행하세요';
   el.classList.toggle('empty', !text);
 }
@@ -818,6 +839,30 @@ $('#btnChar').onclick = () => { if (!state.recording) openCharacterModal(); };
 $('#btnAll').onclick = openAllModal;
 // 버튼 클릭 후 Space가 버튼을 다시 누르지 않도록 포커스를 뺀다
 document.querySelectorAll('button').forEach(b => b.addEventListener('mouseup', () => b.blur()));
+
+/* ---------- 목록 너비 조절 ---------- */
+function setSide(px) {
+  const w = Math.max(180, Math.min(px, window.innerWidth - 320));
+  document.documentElement.style.setProperty('--side', w + 'px');
+  return w;
+}
+try { const w = +localStorage.getItem('kakashi.side'); if (w) setSide(w); } catch {}
+$('#splitter').addEventListener('pointerdown', e => {
+  const sp = e.currentTarget;
+  sp.setPointerCapture(e.pointerId);
+  sp.classList.add('drag');
+  const move = ev => setSide(ev.clientX);
+  sp.addEventListener('pointermove', move);
+  sp.addEventListener('pointerup', ev => {
+    sp.removeEventListener('pointermove', move);
+    sp.classList.remove('drag');
+    try { localStorage.setItem('kakashi.side', setSide(ev.clientX)); } catch {}
+  }, { once: true });
+});
+$('#splitter').addEventListener('dblclick', () => {
+  document.documentElement.style.removeProperty('--side');
+  try { localStorage.removeItem('kakashi.side'); } catch {}
+});
 
 /* ---------- 단축키 ---------- */
 // 키는 e.code로 저장해서 한글 입력 상태에서도 동작한다
