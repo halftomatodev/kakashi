@@ -79,6 +79,7 @@
   #splitter { cursor: col-resize; background: var(--line); }
   #splitter:hover, #splitter.drag { background: var(--accent); }
   .stage { padding: 28px 32px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+  .stage > * { flex-shrink: 0; }
   .line-title { font-size: 26px; word-break: break-all; }
   .line-pos { font-size: 13px; color: var(--muted); }
   .line-text {
@@ -810,7 +811,12 @@ async function startRec() {
   stopPlayback();
   let stream;
   try { stream = await getStream(); }
-  catch (e) { setStatus('마이크를 쓸 수 없습니다: ' + e.message); return; }
+  catch (e) {
+    setStatus(e.name === 'NotAllowedError'
+      ? '마이크가 차단되어 있습니다 — 기기 설정에서 이 브라우저의 마이크를 허용한 뒤 새로고침하세요'
+      : '마이크를 쓸 수 없습니다: ' + e.message);
+    return;
+  }
   state.recording = true;
   updateRecButton();
   await beep();
