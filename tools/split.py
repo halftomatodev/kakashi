@@ -14,7 +14,7 @@ AUDIO_EXT = {'.mp3', '.wav', '.m4a', '.ogg', '.flac', '.aac', '.wma'}
 RATE = 44100
 ASR_RATE = 16000     # Whisper 입력용
 
-SPLIT_GAP = 0.8      # 이만큼(초) 이상 조용하면 다음 대사로 나눈다. 대사가 중간에 잘리면 늘린다
+SPLIT_GAP = 0.5      # 이만큼(초) 이상 조용하면 다음 대사로 나눈다. 대사가 중간에 잘리면 늘린다
 SILENCE_DB = -30     # 가장 큰 소리보다 이만큼(dB) 작으면 무음으로 본다
 PAD_START = 0.15     # 대사 앞 여유
 PAD_END = 0.25       # 대사 뒤 여유

@@ -183,6 +183,7 @@
         <button id="btnPrev">이전 대사<kbd data-key="prev"></kbd></button>
         <button id="btnNext">다음 대사<kbd data-key="next"></kbd></button>
         <button id="btnChar">캐릭터 변경<kbd data-key="char"></kbd></button>
+        <button id="btnDelete">대사 삭제<kbd data-key="del"></kbd></button>
       </div>
       <div>
         <h3>이 대사의 녹음</h3>
@@ -257,6 +258,7 @@ const $ = s => document.querySelector(s);
 const RATE = 44100;
 const GAP_SEC = 0.4;
 const LOG_NAME = '_kakashi_log.json';
+const TRASH_NAME = '삭제한 대사';
 const DEFAULTS = { font: "'NeoDunggeunmo'", custom: '', bg: '#1b1d24', fg: '#e8e6df', accent: '#f0a63a' };
 
 const state = {
@@ -618,6 +620,49 @@ async function renderTakes() {
   }
 }
 
+/* ---------- 대사 삭제 ---------- */
+// 바로 지우지 않고 KAKASHI\삭제한 대사\캐릭터\ 로 옮겨서 되살릴 수 있게 한다
+async function fileExists(dir, name) {
+  try { await dir.getFileHandle(name); return true; } catch { return false; }
+}
+async function trashLine(line) {
+  const root = await state.root.getDirectoryHandle(TRASH_NAME, { create: true });
+  const dir = await root.getDirectoryHandle(state.character.name, { create: true });
+  // 같은 이름을 또 지워도 먼저 지운 파일을 덮어쓰지 않게 한다
+  const suffix = await fileExists(dir, line.name) ? ` (${Date.now()})` : '';
+  for (const h of [line.handle, line.txt].filter(Boolean)) {
+    const name = h.name.replace(/(\.[^.]+)$/, suffix + '$1');
+    const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+    await w.write(await h.getFile());
+    await w.close();
+    await state.character.removeEntry(h.name);
+  }
+}
+async function deleteLine() {
+  const line = cur();
+  if (!line || state.recording) return;
+  if (!confirm(`"${line.base}" 대사를 삭제할까요?\n\n'${TRASH_NAME}' 폴더로 옮겨지고, 이미 녹음한 파일은 그대로 남습니다.`)) return;
+  stopPlayback();
+  try {
+    if (await state.character.requestPermission({ mode: 'readwrite' }) !== 'granted') throw new Error('폴더 쓰기 권한이 없습니다');
+    await trashLine(line);
+  } catch (e) { setStatus('삭제 실패: ' + e.message); return; }
+  state.lines.splice(state.idx, 1);
+  const next = Math.min(state.idx, state.lines.length - 1);
+  state.idx = -1;
+  renderLines();
+  if (next >= 0) {
+    await selectLine(next, true);
+    return;
+  }
+  $('#lineTitle').textContent = '남은 대사가 없습니다';
+  $('#lineText').textContent = '';
+  $('#linePos').textContent = '';
+  $('#takes').innerHTML = '';
+  setStatus(`"${line.base}" 삭제됨`);
+  openCharacterModal();
+}
+
 /* ---------- 재생 ---------- */
 function setStatus(text, rec) {
   $('#status').textContent = text;
@@ -837,6 +882,7 @@ $('#btnPrev').onclick = () => selectLine(state.idx - 1, true);
 $('#btnNext').onclick = () => selectLine(state.idx + 1, true);
 $('#btnChar').onclick = () => { if (!state.recording) openCharacterModal(); };
 $('#btnAll').onclick = openAllModal;
+$('#btnDelete').onclick = deleteLine;
 // 버튼 클릭 후 Space가 버튼을 다시 누르지 않도록 포커스를 뺀다
 document.querySelectorAll('button').forEach(b => b.addEventListener('mouseup', () => b.blur()));
 
@@ -875,6 +921,7 @@ const KEY_ACTIONS = [
   { id: 'next', label: '다음 대사', def: 'KeyN', run: () => selectLine(state.idx + 1, true) },
   { id: 'char', label: '캐릭터 변경', def: 'KeyC', run: () => { if (!state.recording) openCharacterModal(); } },
   { id: 'all', label: '녹음 목록', def: 'KeyL', run: () => openAllModal() },
+  { id: 'del', label: '대사 삭제', def: 'KeyD', run: () => deleteLine() },
 ];
 // 따로 지정하지 않으면 화살표로도 이전/다음 대사로 간다
 const FIXED_KEYS = { ArrowLeft: 'prev', ArrowRight: 'next' };
