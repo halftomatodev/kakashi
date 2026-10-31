@@ -9,6 +9,7 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="theme-color" content="#1b1d24">
 <script src="lib/lame.min.js"></script>
+<script src="lib/dropbox.js"></script>
 <style>
   @font-face {
     font-family: 'NeoDunggeunmo';
@@ -129,13 +130,40 @@
   h3.sec .hint { margin-left: 6px; }
   #keyList .row button { min-width: 120px; }
   #keyList .row button.wait { border-color: var(--accent); color: var(--accent); }
-  .foot { display: flex; justify-content: flex-end; gap: 8px; }
+  .foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
   .hint { font-size: 13px; color: var(--muted); line-height: 1.6; }
+  #dbxCode input {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px; width: min(320px, 100%);
+  }
+  #btnToggleList { display: none; }
+  button { touch-action: manipulation; }
+  @media (pointer: coarse) {
+    kbd, .desk-only { display: none !important; }
+  }
   @media (max-width: 760px) {
-    #app { grid-template-columns: 1fr; grid-template-rows: 220px 1fr; }
-    aside { border-bottom: 1px solid var(--line); }
+    body { height: 100dvh; }
+    header { padding: 6px 12px; gap: 4px 12px; }
+    .stats { font-size: 12px; gap: 4px 10px; }
+    #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    aside { border-bottom: 1px solid var(--line); max-height: 32dvh; }
+    aside.closed #lineList { display: none; }
+    .char-head { padding: 6px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .char-head .label { display: none; }
+    .char-head .name { font-size: 16px; margin: 0; }
+    #btnToggleList { display: block; flex-shrink: 0; padding: 4px 10px; font-size: 13px; }
     #splitter { display: none; }
-    .stage { padding: 16px; }
+    .stage { padding: 12px; gap: 12px; min-height: 0; }
+    .line-title { font-size: 16px; }
+    .line-text { margin-top: 8px; font-size: 19px; }
+    #status { padding: 10px 12px; min-height: 44px; font-size: 14px; }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; }
+    .controls button { min-height: 46px; padding: 8px 4px; }
+    .controls #btnRec { grid-column: 1 / -1; order: -1; min-height: 64px; font-size: 20px; }
+    .takes button { min-height: 40px; }
+    .list button { min-height: 44px; }
+    .row select, .row input[type=text] { min-width: 0; flex: 1; width: 0; }
+    .meter { flex: 1; }
   }
 </style>
 </head>
@@ -152,11 +180,17 @@
 
 <main>
   <section id="setup">
-    <p>카카시 폴더(<b>F:\Dropbox\SBSA\KAKASHI</b>)를 연결하세요.<br>
+    <p>카카시 폴더를 연결하세요.<br>
       그 안의 <b>캐릭터</b> 폴더에서 원본을 읽고, <b>녹음</b> 폴더에 저장합니다.</p>
-    <button id="btnPick">폴더 연결</button>
+    <button id="btnPick" hidden>PC 폴더 연결</button>
     <button id="btnReconnect" hidden>다시 연결: <span id="reconnectName"></span></button>
-    <p id="unsupported" class="warn" hidden>이 브라우저는 폴더 접근을 지원하지 않습니다. Chrome 또는 Edge로 열어 주세요.</p>
+    <button id="btnDropbox">Dropbox 연결</button>
+    <div id="dbxCode" hidden>
+      <p class="hint">Dropbox 창에서 허용을 누른 뒤 나오는 코드를 복사해서 여기에 붙여넣으세요.</p>
+      <input type="text" id="dbxCodeInput" placeholder="코드 붙여넣기" autocomplete="off">
+      <button id="btnDbxCode">확인</button>
+    </div>
+    <p id="setupMsg" class="warn" hidden></p>
   </section>
 
   <section id="app" hidden>
@@ -164,6 +198,7 @@
       <div class="char-head">
         <div class="label">캐릭터</div>
         <div class="name" id="charName">-</div>
+        <button id="btnToggleList">목록 접기</button>
       </div>
       <ul id="lineList"></ul>
     </aside>
@@ -189,7 +224,7 @@
         <h3>이 대사의 녹음</h3>
         <div class="takes" id="takes"></div>
       </div>
-      <p class="hint">흐름: 대사 선택 → 원본 재생 → <b data-key="rec"></b>를 누르면 삑 소리 후 녹음 시작 → <b data-key="rec"></b>로 종료.
+      <p class="hint desk-only">흐름: 대사 선택 → 원본 재생 → <b data-key="rec"></b>를 누르면 삑 소리 후 녹음 시작 → <b data-key="rec"></b>로 종료.
         원본과 내 녹음이 이어 붙은 mp3로 자동 저장되고 바로 재생됩니다.
         <b data-key="retake"></b>은 녹음 중이면 현재 녹음을 버리고 다시, 아니면 새로 녹음합니다.
         <b>Esc</b>는 재생 정지, <b>← →</b>로도 이전/다음 대사로 갑니다. 단축키는 설정에서 바꿀 수 있습니다.</p>
@@ -241,10 +276,11 @@
     <div class="row"><span>배경 색상</span><input type="color" id="setBg"></div>
     <div class="row"><span>글자 색상</span><input type="color" id="setFg"></div>
     <div class="row"><span>강조 색상</span><input type="color" id="setAccent"></div>
-    <h3 class="sec">단축키 <span class="hint">버튼을 누른 뒤 원하는 키를 누르세요 (Esc는 취소)</span></h3>
-    <div id="keyList"></div>
+    <div class="row" id="dbxRow" hidden><span>Dropbox</span><button id="btnDbxLogout">연결 해제</button></div>
+    <h3 class="sec desk-only">단축키 <span class="hint">버튼을 누른 뒤 원하는 키를 누르세요 (Esc는 취소)</span></h3>
+    <div id="keyList" class="desk-only"></div>
     <div class="foot">
-      <button id="btnResetKeys">단축키 기본값</button>
+      <button id="btnResetKeys" class="desk-only">단축키 기본값</button>
       <button id="btnResetSettings">기본값</button>
       <button data-close>닫기</button>
     </div>
@@ -260,6 +296,8 @@ const GAP_SEC = 0.4;
 const LOG_NAME = '_kakashi_log.json';
 const TRASH_NAME = '삭제한 대사';
 const DEFAULTS = { font: "'NeoDunggeunmo'", custom: '', bg: '#1b1d24', fg: '#e8e6df', accent: '#f0a63a' };
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+const recKey = () => keyName(loadKeys().rec);
 
 const state = {
   root: null, charRoot: null, recRoot: null,
@@ -429,13 +467,20 @@ function stopMeter() {
 }
 
 /* ---------- 폴더 연결 ---------- */
+function setupMsg(text) {
+  $('#setupMsg').textContent = text;
+  $('#setupMsg').hidden = !text;
+}
 async function init() {
   applySettings();
-  if (!window.showDirectoryPicker) {
-    $('#unsupported').hidden = false;
-    $('#btnPick').disabled = true;
+  $('#btnPick').hidden = !window.showDirectoryPicker;
+  $('#btnExternal').hidden = !window.showDirectoryPicker;
+  if (Dbx.conf()) {
+    try { await useRoot(Dbx.root()); }
+    catch (e) { setupMsg(e.message); }
     return;
   }
+  if (!window.showDirectoryPicker) return;
   const saved = await kvGet('root');
   if (saved) {
     state.savedRoot = saved;
@@ -455,6 +500,44 @@ $('#btnReconnect').onclick = async () => {
   if (await state.savedRoot.requestPermission({ mode: 'readwrite' }) === 'granted') await useRoot(state.savedRoot);
 };
 
+$('#btnDropbox').onclick = async () => {
+  setupMsg('');
+  if (!Dbx.key) { setupMsg('Dropbox 앱 등록이 아직 끝나지 않았습니다.'); return; }
+  const url = await Dbx.startLogin();
+  $('#dbxCode').hidden = false;
+  window.open(url, '_blank');
+};
+$('#btnDbxCode').onclick = async () => {
+  setupMsg('');
+  try {
+    await Dbx.finishLogin($('#dbxCodeInput').value);
+    // 폴더 위치가 다르면 물어본다
+    for (;;) {
+      try { await Dbx.root().entries(true); break; }
+      catch (e) {
+        if (!/not_found/.test(e.summary || '')) throw e;
+        const p = prompt(`Dropbox에서 ${Dbx.conf().path} 폴더를 찾지 못했습니다.\n카카시 폴더의 경로를 입력하세요.`, Dbx.conf().path);
+        if (!p) { await Dbx.logout(); return; }
+        await Dbx.setPath('/' + p.replace(/^\/+|\/+$/g, ''));
+      }
+    }
+    await useRoot(Dbx.root());
+  } catch (e) { setupMsg(e.message); }
+};
+$('#btnDbxLogout').onclick = async () => {
+  if (!confirm('이 기기에서 Dropbox 연결을 해제할까요?\n\nDropbox의 파일은 지워지지 않습니다.')) return;
+  await Dbx.logout();
+  location.reload();
+};
+async function syncDbx() {
+  if (!(state.root instanceof DbxDir)) return;
+  try {
+    await Dbx.flush();
+    await saveLog();
+  } catch {}
+}
+window.addEventListener('online', syncDbx);
+
 async function useRoot(h) {
   state.root = h;
   state.charRoot = await h.getDirectoryHandle('캐릭터', { create: true });
@@ -463,6 +546,16 @@ async function useRoot(h) {
   await refreshStats();
   $('#setup').hidden = true;
   $('#app').hidden = false;
+  if (h instanceof DbxDir) {
+    $('#dbxRow').hidden = false;
+    syncDbx();
+    const path = localStorage.getItem('kakashi.dbxLast');
+    if (path) {
+      try { await selectCharacter(new DbxDir(path, path.split('/').pop())); return; } catch {}
+    }
+    openCharacterModal();
+    return;
+  }
   const last = await kvGet('lastChar');
   if (last && await last.queryPermission({ mode: 'read' }) === 'granted') {
     try { await selectCharacter(last); return; } catch {}
@@ -493,7 +586,7 @@ async function openCharacterModal() {
   const leaves = (await findLeaves(state.charRoot, '')).sort((a, b) => a.path.localeCompare(b.path, 'ko', { numeric: true }));
   list.innerHTML = '';
   if (!leaves.length) {
-    list.innerHTML = '<div class="hint">KAKASHI\\캐릭터 폴더 안에 캐릭터별 폴더를 만들고 mp3를 넣어 주세요.<br>또는 아래 버튼으로 다른 위치의 폴더를 고를 수 있습니다.</div>';
+    list.innerHTML = '<div class="hint">KAKASHI\\캐릭터 폴더 안에 캐릭터별 폴더를 만들고 mp3를 넣어 주세요.</div>';
   }
   for (const l of leaves) {
     const b = document.createElement('button');
@@ -514,23 +607,25 @@ $('#btnExternal').onclick = async () => {
 
 async function selectCharacter(dir) {
   const lines = [], txts = {};
+  setStatus('대사 불러오는 중…');
   for await (const e of dir.values()) {
     if (e.kind !== 'file') continue;
     if (/\.mp3$/i.test(e.name)) lines.push({ name: e.name, base: e.name.replace(/\.mp3$/i, ''), handle: e });
     else if (/\.txt$/i.test(e.name)) txts[e.name.replace(/\.txt$/i, '')] = e;
   }
-  for (const l of lines) {
+  await Promise.all(lines.map(async l => {
     l.txt = txts[l.base] || null;
     l.text = '';
     try { if (l.txt) l.text = (await (await l.txt.getFile()).text()).trim(); } catch {}
-  }
+  }));
   if (!lines.length) { alert('이 폴더에 mp3 파일이 없습니다.'); openCharacterModal(); return; }
   lines.sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
   stopAll();
   state.character = dir;
   state.lines = lines;
   state.idx = -1;
-  await kvSet('lastChar', dir);
+  if (dir instanceof DbxDir) localStorage.setItem('kakashi.dbxLast', dir.path);
+  else await kvSet('lastChar', dir);
   $('#charName').textContent = dir.name;
   await refreshTakeCounts();
   renderLines();
@@ -592,7 +687,9 @@ async function selectLine(i, autoplay) {
   await renderText();
   await renderTakes();
   if (autoplay) playOriginal();
-  else setStatus('Q로 원본 듣기 · Space로 녹음 시작');
+  else setStatus(TOUCH ? '다시 듣기 또는 녹음 시작을 누르세요' : `${keyName(loadKeys().listen)}로 원본 듣기 · ${recKey()}로 녹음 시작`);
+  // 다음 대사를 미리 받아 두어 바로 재생되게 한다
+  if (state.root instanceof DbxDir) state.lines[i + 1]?.handle.getFile().catch(() => {});
 }
 async function renderText() {
   const el = $('#lineText');
@@ -673,7 +770,8 @@ function playFile(blob, label, onEnd) {
   state.url = URL.createObjectURL(blob);
   player.src = state.url;
   player.onended = () => setStatus(onEnd || '재생 끝');
-  player.play();
+  // 모바일은 자동 재생을 막을 수 있다
+  player.play().catch(e => { if (e.name === 'NotAllowedError') setStatus('다시 듣기를 눌러 재생하세요'); });
   setStatus(label);
 }
 function stopPlayback() {
@@ -683,7 +781,7 @@ function stopPlayback() {
 }
 async function playOriginal() {
   if (!cur() || state.recording) return;
-  playFile(await cur().handle.getFile(), '원본 재생 중…', '원본 끝 — Space로 녹음 시작');
+  playFile(await cur().handle.getFile(), '원본 재생 중…', TOUCH ? '원본 끝 — 녹음 시작을 누르세요' : `원본 끝 — ${recKey()}로 녹음 시작`);
 }
 async function playMine() {
   if (!cur() || state.recording) return;
@@ -726,7 +824,8 @@ async function startRec() {
   mr.start();
   state.recorder = mr;
   const t0 = performance.now();
-  const tick = () => setStatus(`녹음 중 ${((performance.now() - t0) / 1000).toFixed(1)}초 — Space로 종료`, true);
+  const endHint = TOUCH ? '녹음 종료를 누르세요' : `${recKey()}로 종료`;
+  const tick = () => setStatus(`녹음 중 ${((performance.now() - t0) / 1000).toFixed(1)}초 — ${endHint}`, true);
   tick();
   state.recTimer = setInterval(tick, 100);
 }
@@ -815,17 +914,38 @@ async function finishRec(blob) {
 }
 
 /* ---------- 기록 / 통계 ---------- */
-async function loadLog() {
+async function readLog() {
   try {
     const f = await (await state.recRoot.getFileHandle(LOG_NAME)).getFile();
-    state.log = JSON.parse(await f.text());
-  } catch { state.log = []; }
+    return JSON.parse(await f.text());
+  } catch { return []; }
+}
+// 다른 기기에서 쌓인 기록을 덮어쓰지 않도록 합친다
+function mergeLog(a, b) {
+  const all = new Map();
+  for (const r of [...a, ...b]) all.set(`${r.character}/${r.file}/${r.at}`, r);
+  return [...all.values()].sort((x, y) => String(x.at).localeCompare(String(y.at)));
+}
+async function loadLog() {
+  const local = state.recRoot instanceof DbxDir ? (await kvGet('dbxLog')) || [] : [];
+  state.log = mergeLog(await readLog(), local);
 }
 async function saveLog() {
-  const fh = await state.recRoot.getFileHandle(LOG_NAME, { create: true });
-  const w = await fh.createWritable();
-  await w.write(JSON.stringify(state.log, null, 1));
-  await w.close();
+  const dbx = state.recRoot instanceof DbxDir;
+  if (dbx) {
+    await kvSet('dbxLog', state.log);
+    state.recRoot.refresh();
+  }
+  state.log = mergeLog(await readLog(), state.log);
+  try {
+    const fh = await state.recRoot.getFileHandle(LOG_NAME, { create: true });
+    const w = await fh.createWritable();
+    await w.write(JSON.stringify(state.log, null, 1));
+    await w.close();
+  } catch (e) {
+    // 인터넷이 끊겼으면 이 기기에 남겨 두고 다음 연결 때 올린다
+    if (!dbx || !e.offline) throw e;
+  }
 }
 async function refreshStats() {
   // 누적 시간 = 내 목소리 부분의 길이 합 (원본 부분은 제외)
@@ -883,6 +1003,19 @@ $('#btnNext').onclick = () => selectLine(state.idx + 1, true);
 $('#btnChar').onclick = () => { if (!state.recording) openCharacterModal(); };
 $('#btnAll').onclick = openAllModal;
 $('#btnDelete').onclick = deleteLine;
+$('#btnToggleList').onclick = () => {
+  const closed = $('aside').classList.toggle('closed');
+  $('#btnToggleList').textContent = closed ? '목록 펼치기' : '목록 접기';
+};
+window.addEventListener('unhandledrejection', e => { if (state.root) setStatus('오류: ' + (e.reason?.message || e.reason)); });
+// 모바일은 첫 터치에서 소리를 풀어 두어야 이후 자동 재생이 된다
+document.addEventListener('click', () => {
+  ac.resume();
+  if (TOUCH && !player.src) {
+    player.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    player.play().catch(() => {});
+  }
+}, { capture: true, once: true });
 // 버튼 클릭 후 Space가 버튼을 다시 누르지 않도록 포커스를 뺀다
 document.querySelectorAll('button').forEach(b => b.addEventListener('mouseup', () => b.blur()));
 
