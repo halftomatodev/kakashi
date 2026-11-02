@@ -101,6 +101,11 @@
   .controls { display: flex; flex-wrap: wrap; gap: 8px; }
   .controls .primary { border-color: var(--accent); }
   .controls .recbtn.on { border-color: var(--rec); color: var(--rec); }
+  .volume { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; font-size: 14px; }
+  .volume input[type=range] { width: 180px; accent-color: var(--accent); }
+  .volume label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .volume input[type=checkbox] { accent-color: var(--accent); }
+  #volInfo { color: var(--muted); font-size: 13px; }
   h3 { font-weight: normal; font-size: 15px; color: var(--muted); margin: 0 0 8px; }
   .takes { display: flex; flex-wrap: wrap; gap: 6px; }
   .takes .empty { color: var(--muted); font-size: 14px; }
@@ -220,6 +225,13 @@
         <button id="btnNext">다음 대사<kbd data-key="next"></kbd></button>
         <button id="btnChar">캐릭터 변경<kbd data-key="char"></kbd></button>
         <button id="btnDelete">대사 삭제<kbd data-key="del"></kbd></button>
+      </div>
+      <div class="volume">
+        <span>볼륨<kbd data-key="volDown"></kbd><kbd data-key="volUp"></kbd></span>
+        <input type="range" id="volLevel" min="0" max="100" step="5" aria-label="볼륨">
+        <span id="volText"></span>
+        <label title="평균 음량이 기준보다 큰 파일을 자동으로 줄여서 재생합니다"><input type="checkbox" id="volAuto">큰 파일 자동으로 줄이기</label>
+        <span id="volInfo"></span>
       </div>
       <div>
         <h3>이 대사의 녹음</h3>
@@ -766,8 +778,54 @@ function setStatus(text, rec) {
   $('#status').textContent = text;
   $('#status').classList.toggle('rec', !!rec);
 }
-function playFile(blob, label, onEnd) {
+/* ---------- 볼륨 ---------- */
+const LOUD_TARGET = 0.1; // 소리가 나는 구간의 평균 음량 기준 (-20dB)
+function loadVol() {
+  try { return { level: 100, auto: true, ...JSON.parse(localStorage.getItem('kakashi.volume') || '{}') }; }
+  catch { return { level: 100, auto: true }; }
+}
+function saveVol(v) { try { localStorage.setItem('kakashi.volume', JSON.stringify(v)); } catch {} }
+function applyVol() {
+  const { level, auto } = loadVol();
+  $('#volLevel').value = level;
+  $('#volText').textContent = level + '%';
+  $('#volAuto').checked = auto;
+  const gain = auto ? state.autoGain : 1;
+  player.volume = level / 100 * gain;
+  $('#volInfo').textContent = auto && gain < 0.98 ? `이 파일 ${Math.round(20 * Math.log10(gain))}dB` : '';
+}
+function changeVol(delta) {
+  const v = loadVol();
+  saveVol({ ...v, level: Math.max(0, Math.min(100, v.level + delta)) });
+  applyVol();
+}
+$('#volLevel').addEventListener('input', () => { saveVol({ ...loadVol(), level: +$('#volLevel').value }); applyVol(); });
+$('#volAuto').addEventListener('change', () => { saveVol({ ...loadVol(), auto: $('#volAuto').checked }); applyVol(); });
+// 조절 뒤에도 단축키가 바로 동작하도록 포커스를 뺀다
+['#volLevel', '#volAuto'].forEach(id => $(id).addEventListener('change', () => $(id).blur()));
+// 무음을 빼고 재서 대사 사이 공백이 많은 파일도 작게 측정되지 않게 한다
+function loudnessGain(f32) {
+  const size = Math.round(RATE * 0.05);
+  let sum = 0, count = 0;
+  for (let i = 0; i + size <= f32.length; i += size) {
+    let e = 0;
+    for (let j = i; j < i + size; j++) e += f32[j] * f32[j];
+    e /= size;
+    if (e > 1e-5) { sum += e; count++; } // -50dB 이하는 무음으로 본다
+  }
+  if (!count) return 1;
+  return Math.min(1, LOUD_TARGET / Math.sqrt(sum / count));
+}
+
+async function playFile(blob, label, onEnd) {
   stopPlayback();
+  const id = state.playId;
+  state.autoGain = 1;
+  if (loadVol().auto) {
+    try { state.autoGain = loudnessGain(toMono(await decode(blob))); } catch {}
+    if (id !== state.playId) return; // 측정하는 사이에 다른 재생이나 녹음이 시작됨
+  }
+  applyVol();
   state.url = URL.createObjectURL(blob);
   player.src = state.url;
   player.onended = () => setStatus(onEnd || '재생 끝');
@@ -776,6 +834,7 @@ function playFile(blob, label, onEnd) {
   setStatus(label);
 }
 function stopPlayback() {
+  state.playId = (state.playId || 0) + 1;
   player.pause();
   player.onended = null;
   if (state.url) { URL.revokeObjectURL(state.url); state.url = null; }
@@ -1061,6 +1120,8 @@ const KEY_ACTIONS = [
   { id: 'char', label: '캐릭터 변경', def: 'KeyC', run: () => { if (!state.recording) openCharacterModal(); } },
   { id: 'all', label: '녹음 목록', def: 'KeyL', run: () => openAllModal() },
   { id: 'del', label: '대사 삭제', def: 'KeyD', run: () => deleteLine() },
+  { id: 'volDown', label: '볼륨 줄이기', def: 'ArrowDown', run: () => changeVol(-5) },
+  { id: 'volUp', label: '볼륨 키우기', def: 'ArrowUp', run: () => changeVol(5) },
 ];
 // 따로 지정하지 않으면 화살표로도 이전/다음 대사로 간다
 const FIXED_KEYS = { ArrowLeft: 'prev', ArrowRight: 'next' };
@@ -1114,6 +1175,8 @@ function assignKey(id, code) {
 }
 $('#btnResetKeys').onclick = () => { try { localStorage.removeItem('kakashi.keys'); } catch {} state.capturing = null; renderKeys(); };
 renderKeys();
+state.autoGain = 1;
+applyVol();
 
 document.addEventListener('keydown', e => {
   if (state.capturing) {
