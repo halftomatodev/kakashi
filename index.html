@@ -231,6 +231,7 @@
         <input type="range" id="volLevel" min="0" max="100" step="5" aria-label="볼륨">
         <span id="volText"></span>
         <label title="평균 음량이 기준보다 큰 파일을 자동으로 줄여서 재생합니다"><input type="checkbox" id="volAuto">큰 파일 자동으로 줄이기</label>
+        <label title="새로 저장하는 녹음 파일에서 원본과 내 목소리를 같은 음량으로 맞춥니다"><input type="checkbox" id="volNorm">녹음 저장 시 음량 맞추기</label>
         <span id="volInfo"></span>
       </div>
       <div>
@@ -781,8 +782,8 @@ function setStatus(text, rec) {
 /* ---------- 볼륨 ---------- */
 const LOUD_TARGET = 0.1; // 소리가 나는 구간의 평균 음량 기준 (-20dB)
 function loadVol() {
-  try { return { level: 100, auto: true, ...JSON.parse(localStorage.getItem('kakashi.volume') || '{}') }; }
-  catch { return { level: 100, auto: true }; }
+  try { return { level: 100, auto: true, norm: true, ...JSON.parse(localStorage.getItem('kakashi.volume') || '{}') }; }
+  catch { return { level: 100, auto: true, norm: true }; }
 }
 function saveVol(v) { try { localStorage.setItem('kakashi.volume', JSON.stringify(v)); } catch {} }
 function applyVol() {
@@ -790,6 +791,7 @@ function applyVol() {
   $('#volLevel').value = level;
   $('#volText').textContent = level + '%';
   $('#volAuto').checked = auto;
+  $('#volNorm').checked = loadVol().norm;
   const gain = auto ? state.autoGain : 1;
   player.volume = level / 100 * gain;
   $('#volInfo').textContent = auto && gain < 0.98 ? `이 파일 ${Math.round(20 * Math.log10(gain))}dB` : '';
@@ -801,10 +803,11 @@ function changeVol(delta) {
 }
 $('#volLevel').addEventListener('input', () => { saveVol({ ...loadVol(), level: +$('#volLevel').value }); applyVol(); });
 $('#volAuto').addEventListener('change', () => { saveVol({ ...loadVol(), auto: $('#volAuto').checked }); applyVol(); });
+$('#volNorm').addEventListener('change', () => { saveVol({ ...loadVol(), norm: $('#volNorm').checked }); applyVol(); });
 // 조절 뒤에도 단축키가 바로 동작하도록 포커스를 뺀다
-['#volLevel', '#volAuto'].forEach(id => $(id).addEventListener('change', () => $(id).blur()));
+['#volLevel', '#volAuto', '#volNorm'].forEach(id => $(id).addEventListener('change', () => $(id).blur()));
 // 무음을 빼고 재서 대사 사이 공백이 많은 파일도 작게 측정되지 않게 한다
-function loudnessGain(f32) {
+function activeRms(f32) {
   const size = Math.round(RATE * 0.05);
   let sum = 0, count = 0;
   for (let i = 0; i + size <= f32.length; i += size) {
@@ -813,8 +816,20 @@ function loudnessGain(f32) {
     e /= size;
     if (e > 1e-5) { sum += e; count++; } // -50dB 이하는 무음으로 본다
   }
-  if (!count) return 1;
-  return Math.min(1, LOUD_TARGET / Math.sqrt(sum / count));
+  return count ? Math.sqrt(sum / count) : 0;
+}
+function loudnessGain(f32) {
+  const rms = activeRms(f32);
+  return rms ? Math.min(1, LOUD_TARGET / rms) : 1;
+}
+// 기준 음량에 맞춘다. 작은 소리는 최대 +20dB까지만 키우고, 소리가 깨지지 않게 최고점을 넘기지 않는다
+function normalize(f32) {
+  const rms = activeRms(f32);
+  if (!rms) return f32;
+  let peak = 0;
+  for (const v of f32) peak = Math.max(peak, Math.abs(v));
+  const g = Math.min(LOUD_TARGET / rms, 10, 0.95 / peak);
+  return f32.map(v => v * g);
 }
 
 async function playFile(blob, label, onEnd) {
@@ -945,8 +960,9 @@ async function finishRec(blob) {
   if (!window.lamejs) { setStatus('mp3 인코더(lib/lame.min.js)를 불러오지 못했습니다. lib 폴더가 index.html 옆에 있는지 확인하세요.'); return; }
   setStatus('저장 중…');
   try {
-    const orig = toMono(await decode(await line.handle.getFile()));
-    const mine = toMono(await decode(blob), loadMic().chan);
+    let orig = toMono(await decode(await line.handle.getFile()));
+    let mine = toMono(await decode(blob), loadMic().chan);
+    if (loadVol().norm) { orig = normalize(orig); mine = normalize(mine); }
     const gap = Math.round(GAP_SEC * RATE);
     const all = new Float32Array(orig.length + gap + mine.length);
     all.set(orig);
