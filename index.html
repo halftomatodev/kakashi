@@ -9,7 +9,6 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <meta name="theme-color" content="#1b1d24">
 <script src="lib/lame.min.js"></script>
-<script src="lib/dropbox.js"></script>
 <style>
   @font-face {
     font-family: 'NeoDunggeunmo';
@@ -138,10 +137,6 @@
   #keyList .row button.wait { border-color: var(--accent); color: var(--accent); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
   .hint { font-size: 13px; color: var(--muted); line-height: 1.6; }
-  #dbxCode input {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
-    padding: 8px; width: min(320px, 100%);
-  }
   #btnToggleList { display: none; }
   button { touch-action: manipulation; }
   @media (pointer: coarse) {
@@ -188,14 +183,8 @@
   <section id="setup">
     <p>카카시 폴더를 연결하세요.<br>
       그 안의 <b>캐릭터</b> 폴더에서 원본을 읽고, <b>녹음</b> 폴더에 저장합니다.</p>
-    <button id="btnPick" hidden>PC 폴더 연결</button>
+    <button id="btnPick">폴더 연결</button>
     <button id="btnReconnect" hidden>다시 연결: <span id="reconnectName"></span></button>
-    <button id="btnDropbox">Dropbox 연결</button>
-    <div id="dbxCode" hidden>
-      <p class="hint">Dropbox 창에서 허용을 누른 뒤 나오는 코드를 복사해서 여기에 붙여넣으세요.</p>
-      <input type="text" id="dbxCodeInput" placeholder="코드 붙여넣기" autocomplete="off">
-      <button id="btnDbxCode">확인</button>
-    </div>
     <p id="setupMsg" class="warn" hidden></p>
   </section>
 
@@ -290,7 +279,6 @@
     <div class="row"><span>배경 색상</span><input type="color" id="setBg"></div>
     <div class="row"><span>글자 색상</span><input type="color" id="setFg"></div>
     <div class="row"><span>강조 색상</span><input type="color" id="setAccent"></div>
-    <div class="row" id="dbxRow" hidden><span>Dropbox</span><button id="btnDbxLogout">연결 해제</button></div>
     <h3 class="sec desk-only">단축키 <span class="hint">버튼을 누른 뒤 원하는 키를 누르세요 (Esc는 취소)</span></h3>
     <div id="keyList" class="desk-only"></div>
     <div class="foot">
@@ -485,16 +473,31 @@ function setupMsg(text) {
   $('#setupMsg').textContent = text;
   $('#setupMsg').hidden = !text;
 }
+// 예전 Dropbox 연결 기능이 이 브라우저에 남긴 로그인 정보와 받아 둔 파일을 지운다
+async function clearDropboxData() {
+  try { ['kakashi.dbx', 'kakashi.dbxLast', 'kakashi.dbxVerifier'].forEach(k => localStorage.removeItem(k)); } catch {}
+  try {
+    const db = await idb();
+    await new Promise(res => {
+      const t = db.transaction('kv', 'readwrite');
+      t.objectStore('kv').openCursor().onsuccess = e => {
+        const c = e.target.result;
+        if (!c) return;
+        if (String(c.key).startsWith('dbx')) c.delete();
+        c.continue();
+      };
+      t.oncomplete = res; t.onerror = res;
+    });
+  } catch {}
+}
 async function init() {
   applySettings();
-  $('#btnPick').hidden = !window.showDirectoryPicker;
-  $('#btnExternal').hidden = !window.showDirectoryPicker;
-  if (Dbx.conf()) {
-    try { await useRoot(Dbx.root()); }
-    catch (e) { setupMsg(e.message); }
+  clearDropboxData();
+  if (!window.showDirectoryPicker) {
+    setupMsg('이 브라우저는 폴더 접근을 지원하지 않습니다. Chrome 또는 Edge로 열어 주세요.');
+    $('#btnPick').disabled = true;
     return;
   }
-  if (!window.showDirectoryPicker) return;
   const saved = await kvGet('root');
   if (saved) {
     state.savedRoot = saved;
@@ -514,44 +517,6 @@ $('#btnReconnect').onclick = async () => {
   if (await state.savedRoot.requestPermission({ mode: 'readwrite' }) === 'granted') await useRoot(state.savedRoot);
 };
 
-$('#btnDropbox').onclick = async () => {
-  setupMsg('');
-  if (!Dbx.key) { setupMsg('Dropbox 앱 등록이 아직 끝나지 않았습니다.'); return; }
-  const url = await Dbx.startLogin();
-  $('#dbxCode').hidden = false;
-  window.open(url, '_blank');
-};
-$('#btnDbxCode').onclick = async () => {
-  setupMsg('');
-  try {
-    await Dbx.finishLogin($('#dbxCodeInput').value);
-    // 폴더 위치가 다르면 물어본다
-    for (;;) {
-      try { await Dbx.root().entries(true); break; }
-      catch (e) {
-        if (!/not_found/.test(e.summary || '')) throw e;
-        const p = prompt(`Dropbox에서 ${Dbx.conf().path} 폴더를 찾지 못했습니다.\n카카시 폴더의 경로를 입력하세요.`, Dbx.conf().path);
-        if (!p) { await Dbx.logout(); return; }
-        await Dbx.setPath('/' + p.replace(/^\/+|\/+$/g, ''));
-      }
-    }
-    await useRoot(Dbx.root());
-  } catch (e) { setupMsg(e.message); }
-};
-$('#btnDbxLogout').onclick = async () => {
-  if (!confirm('이 기기에서 Dropbox 연결을 해제할까요?\n\nDropbox의 파일은 지워지지 않습니다.')) return;
-  await Dbx.logout();
-  location.reload();
-};
-async function syncDbx() {
-  if (!(state.root instanceof DbxDir)) return;
-  try {
-    await Dbx.flush();
-    await saveLog();
-  } catch {}
-}
-window.addEventListener('online', syncDbx);
-
 async function useRoot(h) {
   state.root = h;
   state.charRoot = await h.getDirectoryHandle('캐릭터', { create: true });
@@ -560,16 +525,6 @@ async function useRoot(h) {
   await refreshStats();
   $('#setup').hidden = true;
   $('#app').hidden = false;
-  if (h instanceof DbxDir) {
-    $('#dbxRow').hidden = false;
-    syncDbx();
-    const path = localStorage.getItem('kakashi.dbxLast');
-    if (path) {
-      try { await selectCharacter(new DbxDir(path, path.split('/').pop())); return; } catch {}
-    }
-    openCharacterModal();
-    return;
-  }
   const last = await kvGet('lastChar');
   if (last && await last.queryPermission({ mode: 'read' }) === 'granted') {
     try { await selectCharacter(last); return; } catch {}
@@ -638,8 +593,7 @@ async function selectCharacter(dir) {
   state.character = dir;
   state.lines = lines;
   state.idx = -1;
-  if (dir instanceof DbxDir) localStorage.setItem('kakashi.dbxLast', dir.path);
-  else await kvSet('lastChar', dir);
+  await kvSet('lastChar', dir);
   $('#charName').textContent = dir.name;
   await refreshTakeCounts();
   renderLines();
@@ -701,10 +655,7 @@ async function selectLine(i, autoplay) {
   await renderText();
   await renderTakes();
   if (autoplay) playOriginal();
-  else setStatus(TOUCH ? '다시 듣기 또는 녹음 시작을 누르세요' : `${keyName(loadKeys().listen)}로 원본 듣기 · ${recKey()}로 녹음 시작`);
-  // 다음 대사를 미리 받아 두어 바로 재생되게 한다
-  if (state.root instanceof DbxDir) state.lines[i + 1]?.handle.getFile().catch(() => {});
-}
+  else setStatus(TOUCH ? '다시 듣기 또는 녹음 시작을 누르세요' : `${keyName(loadKeys().listen)}로 원본 듣기 · ${recKey()}로 녹음 시작`);}
 async function renderText() {
   const el = $('#lineText');
   let text = '';
@@ -1008,25 +959,14 @@ function mergeLog(a, b) {
   return [...all.values()].sort((x, y) => String(x.at).localeCompare(String(y.at)));
 }
 async function loadLog() {
-  const local = state.recRoot instanceof DbxDir ? (await kvGet('dbxLog')) || [] : [];
-  state.log = mergeLog(await readLog(), local);
+  state.log = await readLog();
 }
 async function saveLog() {
-  const dbx = state.recRoot instanceof DbxDir;
-  if (dbx) {
-    await kvSet('dbxLog', state.log);
-    state.recRoot.refresh();
-  }
   state.log = mergeLog(await readLog(), state.log);
-  try {
-    const fh = await state.recRoot.getFileHandle(LOG_NAME, { create: true });
-    const w = await fh.createWritable();
-    await w.write(JSON.stringify(state.log, null, 1));
-    await w.close();
-  } catch (e) {
-    // 인터넷이 끊겼으면 이 기기에 남겨 두고 다음 연결 때 올린다
-    if (!dbx || !e.offline) throw e;
-  }
+  const fh = await state.recRoot.getFileHandle(LOG_NAME, { create: true });
+  const w = await fh.createWritable();
+  await w.write(JSON.stringify(state.log, null, 1));
+  await w.close();
 }
 async function refreshStats() {
   // 누적 시간 = 내 목소리 부분의 길이 합 (원본 부분은 제외)
